@@ -27,7 +27,7 @@ public class UnitAction extends PlanAction{
 
     public final int y;
     public static final int move_span = 2;
-    public static float harvest_chance = 0.5f;
+    public static float harvest_chance = 0.7f;
 
     public UnitAction(UnitActionType type, int x, int y) {
         this.action_type = type;

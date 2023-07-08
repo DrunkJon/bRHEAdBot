@@ -9,6 +9,7 @@ import main.BetterGameState;
 import rts.GameState;
 import rts.PlayerAction;
 import rts.units.Unit;
+import rts.units.UnitType;
 import rts.units.UnitTypeTable;
 
 import java.util.List;
@@ -57,20 +58,35 @@ public class EvaluationAI extends BetterAbstractionAI {
 
     public static float econScore(int player, BetterGameState bgs) {
         List<Unit> units = bgs.getPlayerUnits(player);
+        float base_count = 0.5f;
+        float barracks_count = 0.5f;
         float score = 1.f * bgs.getPhysicalGameState().getPlayer(player).getResources();
         for (Unit u: units) {
-            score += ((u.getType().name.equals("Worker"))? worker_worth : 3.) * u.getType().cost * ((float) u.getHitPoints() / u.getMaxHitPoints());
-            score += 0.5 * u.getResources();
+            String type_name = u.getType().name;
+            if (type_name == "Barracks") {
+                score += unitWorth(u) / barracks_count;
+                barracks_count++;
+            } else if (type_name == "Base") {
+                score += unitWorth(u) / base_count;
+                base_count++;
+            } else {
+                score += unitWorth(u);
+            }
+            // score += 0.5 * u.getResources();
         }
         return score;
+    }
+
+    public static float unitWorth(Unit u) {
+        return (float) ((u.getType().name.equals("Worker"))? worker_worth : 3.) * u.getType().cost * ((float) u.getHitPoints() / u.getMaxHitPoints());
     }
 
     public void scorePlan(int player, BetterGameState bgs) {
         if (bgs.gameover()) {
             if (bgs.winner() == player) {
-                plan.add_score(cum_score + 100000 * (float) Math.pow(end_falloff, frame / 10f));
+                plan.add_score(cum_score + 500000 * (float) Math.pow(end_falloff, frame / 10f));
             } else {
-                plan.add_score(cum_score - 50000 * (float) Math.pow(end_falloff, frame / 10f));
+                plan.add_score(cum_score - 500000 * (float) Math.pow(end_falloff, frame / 10f));
             }
         } else {
             plan.add_score(cum_score);

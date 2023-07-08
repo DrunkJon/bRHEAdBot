@@ -1,9 +1,9 @@
 package main.RHEA;
 
-import ai.abstraction.WorkerRush;
 import ai.abstraction.pathfinding.GreedyPathFinding;
 import ai.core.AI;
 import main.BetterGameState;
+import main.DynamicRush;
 import rts.units.UnitTypeTable;
 
 import java.util.ArrayList;
@@ -116,7 +116,7 @@ public class SelectionRunner {
             if (use_enemy) {
                 ai2 = new EvaluationAI(new GreedyPathFinding(), utt, container.enemy_plans.get(0));
             } else {
-                ai2 = new WorkerRush(utt, new GreedyPathFinding());
+                ai2 = new DynamicRush(utt, new GreedyPathFinding());
             }
             boolean gameover = false;
             while(!gameover && !ai1.timeout()) {

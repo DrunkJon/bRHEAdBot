@@ -9,6 +9,7 @@ import com.eclipsesource.json.Json;
 import com.eclipsesource.json.JsonObject;
 import main.BetterAbstraction.BetterAbstractionAI;
 import main.BetterGameState;
+import main.DynamicRush;
 import rts.GameState;
 import rts.PhysicalGameState;
 import rts.PlayerAction;
@@ -16,18 +17,23 @@ import rts.units.Unit;
 import rts.units.UnitTypeTable;
 
 import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.Random;
+import java.util.concurrent.TimeoutException;
 
 public class bRHEAdBot extends BetterAbstractionAI {
     public boolean DEBUG = false;
+
+    public Random r = new Random();
     Plan cur_best_player;
     Plan cur_best_enemy;
     int frame_num = 0;
 
     int iter_count = 0;
+    double hardcoded_rate = 0.5;
     static int POP_SIZE = 40;
-    PlanContainer temp_pop = null;
     PlanContainer cur_pop = null;
     PlanContainer next_pop =null;
 
@@ -39,37 +45,16 @@ public class bRHEAdBot extends BetterAbstractionAI {
     private long call_start_time;
 
     private boolean final_rush = false;
-    int slice_index = 0;
-    public long start_time;
-    public double avg_slice_time = 0.;
-    public double avg_slice_spike = 0.;
-
-    public boolean one_slice_mode = false;
 
     public String readWriteFolder = null;
 
     public bRHEAdBot(UnitTypeTable utt) {
-        super(new GreedyPathFinding(), utt);
+        this(utt, false);
     }
-    public bRHEAdBot(UnitTypeTable utt, boolean debug) throws Exception {
+    public bRHEAdBot(UnitTypeTable utt, boolean debug) {
         super(new GreedyPathFinding(), utt);
         this.DEBUG = debug;
         this.selectionRunner = new SelectionRunner(debug, utt);
-    }
-
-    public void start_slice() {start_time = System.currentTimeMillis();}
-
-    public void end_slice() {
-        double slice_time = (System.currentTimeMillis() - start_time);
-        one_slice_mode = slice_time >= TIME_BUDGET * 0.8;
-        if (one_slice_mode) {
-            return; // will perma skip slices if we calculate avg with this time
-        }
-        double diff = slice_time - avg_slice_time;
-        avg_slice_time += (diff) / 3;
-        if (diff > 0) {
-            avg_slice_spike += (avg_slice_time == 0.)? diff: (diff - avg_slice_spike) / 3;
-        }
     }
 
     public double getTimeInCall() {
@@ -109,12 +94,11 @@ public class bRHEAdBot extends BetterAbstractionAI {
         }
 
         // MAIN LOOP
-        BetterGameState simul_bgs = predictNextGameState(player, bgs);
-        String last_call = "NONE";
         while (true) {
             if (getTimeInCall() >= runtime_buffer * 0.85) break;
             if (!selectionRunner.running) {
-                last_call = "START";
+                iter_count++;
+                BetterGameState simul_bgs = predictNextGameState(player, bgs);
                 next_pop = cur_pop.clone();
                 // PlanContainer randoms = new PlanContainer(player, POP_SIZE , simul_bgs);
                 PlanContainer kids = next_pop.crossoverAll(POP_SIZE / 4, simul_bgs);
@@ -123,19 +107,19 @@ public class bRHEAdBot extends BetterAbstractionAI {
                 next_pop.add(kids);
                 next_pop.add(mutants);
                 try {
-                    cur_pop = selectionRunner.startRun(next_pop, POP_SIZE, simul_bgs, call_start_time + (long) Math.floor(runtime_buffer * timout_fraction), true);
+                    cur_pop = selectionRunner.startRun(next_pop, POP_SIZE, simul_bgs,
+                            call_start_time + (long) Math.floor(runtime_buffer * timout_fraction),
+                            r.nextDouble() <= hardcoded_rate);
                 } catch (TimeoutException e) {
                     break;
                 }
             } else {
-                last_call = "CONTINUE";
                 try {
                     cur_pop = selectionRunner.continueRun(call_start_time + (long) Math.floor(runtime_buffer * timout_fraction));
                 } catch (TimeoutException e) {
                     break;
                 }
             }
-            iter_count++;
         }
 
         if (getTimeInCall() > runtime_buffer) {
@@ -144,7 +128,6 @@ public class bRHEAdBot extends BetterAbstractionAI {
                 double time = getTimeInCall();
                 double budget = runtime_buffer;
                 System.out.printf("TIME %f | %f BUFFER\n", time, budget);
-                System.out.printf("last call: %s\n", last_call);
             }
         }
 
@@ -169,11 +152,9 @@ public class bRHEAdBot extends BetterAbstractionAI {
                 System.out.println();
             }
             cur_pop.next_step(bgs);
-            iter_count = 0;
             if (frame_num >= 3000 && EvaluationAI.econScore(player, bgs) > 2 * EvaluationAI.econScore(1-player, bgs)) {
                 final_rush = true;
             }
-            // bgs.ucDEBUG();
         }
 
         cur_best_player.assignActions(bgs.getPlayerUnits(player), this, player, bgs);
@@ -213,15 +194,31 @@ public class bRHEAdBot extends BetterAbstractionAI {
     public void setupGlobals(PhysicalGameState pgs) {
         int map_size = pgs.getWidth() * pgs.getHeight();
         if (map_size <= 8*8) {
-            Plan.lookahead_steps = 20;
+            Plan.lookahead_steps = 25;
             EvaluationAI.worker_worth = 1.5f;
             BuildingAction.worker_chance = 0.5f;
+            EvaluationAI.end_falloff = 0.7f;
+            EvaluationAI.econ_scale = 2f;
+            hardcoded_rate = 0.7;
         } else if (map_size <= 16*16) {
             Plan.lookahead_steps = 30;
+            EvaluationAI.worker_worth = 1.f;
+            BuildingAction.worker_chance = 0.2f;
+            EvaluationAI.end_falloff = 0.8f;
+            EvaluationAI.econ_scale = 1.75f;
+            hardcoded_rate = 0.5;
         } else if (map_size < 64 * 64) {
             Plan.lookahead_steps = 40;
+            BuildingAction.worker_chance = 0.2f;
+            EvaluationAI.end_falloff = 0.8f;
+            EvaluationAI.econ_scale = 1.5f;
+            hardcoded_rate = 0.3;
         } else {
             Plan.lookahead_steps = 50;
+            BuildingAction.worker_chance = 0.2f;
+            EvaluationAI.end_falloff = 0.8f;
+            EvaluationAI.econ_scale = 1.5f;
+            hardcoded_rate = 0.2;
         }
     }
 
@@ -261,7 +258,7 @@ public class bRHEAdBot extends BetterAbstractionAI {
         BetterGameState simul_bgs = bgs.clone();
         EvaluationAI ai1 = new EvaluationAI(new GreedyPathFinding(), utt, cur_best_player);
         // EvaluationAI ai2 = new EvaluationAI(new GreedyPathFinding(), utt, cur_best_enemy);
-        AI ai2 = new WorkerRush(utt, new GreedyPathFinding());
+        AI ai2 = new DynamicRush(utt, new GreedyPathFinding());
         int simul_frame = frame_num;
         boolean gameover = false;
         while (!(simul_frame % Plan.step_frames == 0) && !gameover) {
@@ -420,7 +417,6 @@ public class bRHEAdBot extends BetterAbstractionAI {
     public String toString() {
         return "bRHEAdBot";
     }
-
     /*
     public void preGameAnalysis(GameState gs, long milliseconds, String readWriteFolder) throws Exception
     {
@@ -433,7 +429,7 @@ public class bRHEAdBot extends BetterAbstractionAI {
         Plan.lookahead_steps = 150;
         // EvaluationAI.score_falloff = 0.97f;
         // EvaluationAI.end_falloff = 0.96f;
-        int pregame_POP_SIZE = 120;
+        int pregame_POP_SIZE = 80;
         double avg_loop_time = 0;
         int loop_times = 0;
         frame_num = 0;
@@ -445,14 +441,12 @@ public class bRHEAdBot extends BetterAbstractionAI {
         while (System.currentTimeMillis() - start_time + avg_loop_time < 0.8 * milliseconds) {
             long loop_start = System.currentTimeMillis();
 
-            PlanContainer kids = pop.crossover(pregame_POP_SIZE / 2, bgs);
-            PlanContainer mutants = pop.mutate(pregame_POP_SIZE / 2, bgs);
+            PlanContainer kids = pop.crossover(pregame_POP_SIZE / 8, bgs);
+            PlanContainer mutants = pop.mutate(pregame_POP_SIZE / 8, bgs);
             pop.add(kids);
             pop.add(mutants);
-            for (int i =0; i < 10; i++) {
-                pop = environmentSelection(pop, bgs, 0, pop.size());
-            }
-            pop = pop.reduceToBestN(pregame_POP_SIZE);
+
+            pop = selectionRunner.startRun(pop, pregame_POP_SIZE, bgs, (long) (start_time + milliseconds), true);
             System.out.printf("best score: %f (%d)\n", pop.getBestPlayer().avg_score, pop.getBestPlayer().times_scored);
             System.out.printf("best enemy: %f (%d)\n", pop.getBestEnemy().avg_score, pop.getBestEnemy().times_scored);
 
@@ -462,9 +456,12 @@ public class bRHEAdBot extends BetterAbstractionAI {
             if (DEBUG) System.out.printf("iteration #%d in %dms (%dms total)\n", loop_times, loop_time - loop_start, loop_time - start_time);
         }
 
+        System.out.printf("finished main loop\n");
+
         // SAVE RESULTS
         JsonObject json_pop = pop.reduceToBestN(10).toJson();
         try {
+            System.out.printf("writing\n");
             FileWriter file_writer = new FileWriter(readWriteFolder + "/start_pop.json");
             json_pop.writeTo(file_writer);
             file_writer.close();
@@ -472,10 +469,11 @@ public class bRHEAdBot extends BetterAbstractionAI {
             System.out.println("IO EXCEPTION FML ;_;");
         }
 
+        System.out.printf("finished writing\n");
+
         // RESET GLOBALS
         EvaluationAI.score_falloff = 0.95f;
         EvaluationAI.end_falloff = 0.9f;
     }
-
-     */
+    */
 }
